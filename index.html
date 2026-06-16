@@ -446,7 +446,48 @@
   let phase = 'focus';
   let sessionCount = 0;
   let newPomos = 2;
+  let audioCtx = null;
 
+  // ── Audio ──────────────────────────────────────────────────────────────────
+  function getAudioCtx() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    return audioCtx;
+  }
+
+  function playAlert(isFocus) {
+    try {
+      const ctx = getAudioCtx();
+      // Play 3 short beeps for focus end, 1 gentle tone for break end
+      const beeps = isFocus ? [0, 0.25, 0.5] : [0];
+      beeps.forEach(delay => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = 'sine';
+        osc.frequency.value = isFocus ? 880 : 528;
+        gain.gain.setValueAtTime(0, ctx.currentTime + delay);
+        gain.gain.linearRampToValueAtTime(0.6, ctx.currentTime + delay + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.4);
+        osc.start(ctx.currentTime + delay);
+        osc.stop(ctx.currentTime + delay + 0.45);
+      });
+    } catch(e) { console.warn('Audio error:', e); }
+  }
+
+  // ── Persistence ────────────────────────────────────────────────────────────
+  function saveTasks() {
+    try { localStorage.setItem('pomo_tasks', JSON.stringify(tasks)); } catch(e) {}
+  }
+
+  function loadTasks() {
+    try {
+      const saved = localStorage.getItem('pomo_tasks');
+      if (saved) tasks = JSON.parse(saved);
+    } catch(e) { tasks = []; }
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
   function pad(n) { return String(n).padStart(2, '0'); }
 
   function initPomoBtns() {
@@ -479,7 +520,10 @@
     ).join('');
   }
 
+  // ── Timer ──────────────────────────────────────────────────────────────────
   function toggleTimer() {
+    // Unlock audio context on first user gesture
+    getAudioCtx();
     if (running) {
       clearInterval(ticker);
       running = false;
@@ -496,16 +540,18 @@
     if (timeLeft <= 0) {
       clearInterval(ticker); running = false;
       if (phase === 'focus') {
+        playAlert(true);
         sessionCount = (sessionCount + 1) % 5;
         if (selectedId !== null) {
           const t = tasks.find(t => t.id === selectedId);
-          if (t) { t.pomoDone = Math.min(t.pomoDone + 1, t.pomos); renderTasks(); }
+          if (t) { t.pomoDone = Math.min(t.pomoDone + 1, t.pomos); saveTasks(); renderTasks(); }
         }
         const breakLen = sessionCount === 0 ? 15 : 5;
         phase = 'break';
         timeLeft = breakLen * 60;
         document.getElementById('timerPhase').textContent = 'BREAK — ' + breakLen + ' MIN';
       } else {
+        playAlert(false);
         phase = 'focus';
         timeLeft = duration * 60;
         document.getElementById('timerPhase').textContent = 'FOCUS';
@@ -527,6 +573,7 @@
 
   function skipPhase() { clearInterval(ticker); running = false; timeLeft = 0; tick(); }
 
+  // ── Tasks ──────────────────────────────────────────────────────────────────
   function addTask() {
     const el = document.getElementById('taskInput');
     const name = el.value.trim();
@@ -534,6 +581,7 @@
     tasks.push({ id: Date.now(), name, pomos: newPomos, pomoDone: 0, done: false });
     el.value = '';
     el.focus();
+    saveTasks();
     renderTasks();
   }
 
@@ -550,6 +598,7 @@
     if (!t) return;
     t.done = !t.done;
     if (t.done && selectedId === id) { selectedId = null; updateActiveLabel(); }
+    saveTasks();
     renderTasks();
   }
 
@@ -557,6 +606,7 @@
     e.stopPropagation();
     tasks = tasks.filter(t => t.id !== id);
     if (selectedId === id) { selectedId = null; updateActiveLabel(); }
+    saveTasks();
     renderTasks();
   }
 
@@ -593,9 +643,12 @@
     }).join('');
   }
 
+  // ── Init ───────────────────────────────────────────────────────────────────
+  loadTasks();
   initPomoBtns();
   updateDisplay();
   updateDots();
+  renderTasks();
 </script>
 </body>
 </html>
